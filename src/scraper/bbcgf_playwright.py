@@ -68,82 +68,74 @@ async def scrape_recipes():
                 await page.goto(recipe_url)
                 await asyncio.sleep(1)
 
-                # defaults
-                item_id = None
-                name = ""
-                serves_no = 0
-                difficulty = ""
-                prep_time = None
-                cook_time = None
-                rating = None
-                description = ""
-                features = []
-                ingredients = []
-                method = []
-                comments = []
-                nutrition = Nutrition(
-                    calories=0.0,
-                    fat=0.0,
-                    saturates=0.0,
-                    carbs=0.0,
-                    sugar=0.0,
-                    fibre=0.0,
-                    protein=0.0,
-                    salt=0.0,
-                )
-                image_bytes = b""
+                # ─── build up a dict of only the fields we scrape ────────────────────
+                recipe_data: dict[str, any] = {}
 
-                # ─── scrape fields with try/except ─────────────────────────────────
+                # item id
                 try:
                     post = page.locator("div.post.recipe").first
-                    item_id = int(await post.get_attribute("data-item-id"))
-                    logger.info(f"Item ID: {item_id} for {recipe_url}")
+                    recipe_data["id"] = int(await post.get_attribute("data-item-id"))
+                    logger.info(f"Item ID: {recipe_data['id']} for {recipe_url}")
                 except Exception:
                     logger.warning(f"Item ID missing for {recipe_url}")
 
+                # title
                 try:
-                    name = await page.locator("h1.heading-1").inner_text()
-                    logger.info(f"Name: {name} for {recipe_url}")
+                    recipe_data["name"] = await page.locator(
+                        "h1.heading-1"
+                    ).inner_text()
+                    logger.info(f"Name: {recipe_data['name']} for {recipe_url}")
                 except Exception:
                     logger.warning(f"Title missing for {recipe_url}")
 
+                # serves & difficulty
                 try:
                     strongs = page.locator(
                         "div.recipe-cook-and-prep-details__item strong"
                     )
                     serves_text = await strongs.nth(0).inner_text()
-                    serves_no = float(re.search(r"\d+", serves_text).group())
-                    difficulty = await strongs.nth(1).inner_text()
+                    recipe_data["serves_no"] = float(
+                        re.search(r"\d+", serves_text).group()
+                    )
+                    recipe_data["difficulty"] = await strongs.nth(1).inner_text()
                     logger.info(
-                        f"Serves: {serves_no} and difficulty: {difficulty} for {recipe_url}"
+                        f"Serves: {recipe_data['serves_no']} and difficulty: "
+                        f"{recipe_data['difficulty']} for {recipe_url}"
                     )
                 except Exception:
                     logger.warning(f"Serves or difficulty missing for {recipe_url}")
 
+                # prep time
                 try:
-                    prep_time = (
+                    recipe_data["prep_time"] = (
                         await page.locator(
                             "div.recipe-cook-and-prep-details__item", has_text="Prep"
                         )
                         .locator("time")
                         .get_attribute("datetime")
                     )
-                    logger.info(f"Prep time: {prep_time} for {recipe_url}")
+                    logger.info(
+                        f"Prep time: {recipe_data['prep_time']} for {recipe_url}"
+                    )
                 except Exception:
                     logger.warning(f"Prep time missing for {recipe_url}")
 
+                # cook time
                 try:
-                    cook_time = (
+                    recipe_data["cook_time"] = (
                         await page.locator(
                             "div.recipe-cook-and-prep-details__item", has_text="Cook"
                         )
                         .locator("time")
                         .get_attribute("datetime")
                     )
-                    logger.info(f"Cook time: {cook_time} for {recipe_url}")
+                    logger.info(
+                        f"Cook time: {recipe_data['cook_time']} for {recipe_url}"
+                    )
                 except Exception:
                     logger.warning(f"Cook time missing for {recipe_url}")
 
+                # rating
                 try:
                     script_texts = await page.locator(
                         "script[type='application/ld+json']"
@@ -154,103 +146,112 @@ async def scrape_recipes():
                             "aggregateRating"
                         ):
                             rating = float(data["aggregateRating"]["ratingValue"])
+                            recipe_data["rating"] = int(rating)
                             break
-                    logger.info(f"Rating: {rating} for {recipe_url}")
+                    logger.info(f"Rating: {recipe_data.get('rating')} for {recipe_url}")
                 except Exception:
                     logger.warning(f"Rating missing for {recipe_url}")
 
+                # description
                 try:
-                    description = await page.locator(
+                    recipe_data["description"] = await page.locator(
                         "#recipe-masthead-description-region p"
                     ).inner_text()
-                    logger.info(f"Description: {description} for {recipe_url}")
+                    logger.info(f"Description captured for {recipe_url}")
                 except Exception:
                     logger.warning(f"Description missing for {recipe_url}")
 
+                # features / tags
                 try:
-                    features = await page.locator(
+                    recipe_data["features"] = await page.locator(
                         ".post-header--masthead__tags-item"
                     ).all_inner_texts()
+                    logger.info(f"Features: {recipe_data['features']} for {recipe_url}")
                 except Exception:
                     logger.warning(f"Features missing for {recipe_url}")
 
+                # ingredients (required by your model—will set default empty list below)
                 try:
-                    ingredients = await page.locator(
+                    recipe_data["ingredients"] = await page.locator(
                         "#ingredients-list li.ingredients-list__item"
                     ).all_inner_texts()
+                    logger.info(
+                        f"Ingredients ({len(recipe_data['ingredients'])}) for {recipe_url}"
+                    )
                 except Exception:
                     logger.warning(f"Ingredients missing for {recipe_url}")
 
+                # method steps (required by your model—default below)
                 try:
-                    method = await page.locator(
+                    recipe_data["method"] = await page.locator(
                         ".method-steps__list-item .editor-content"
                     ).all_inner_texts()
+                    logger.info(
+                        f"Method steps ({len(recipe_data['method'])}) for {recipe_url}"
+                    )
                 except Exception:
                     logger.warning(f"Method steps missing for {recipe_url}")
 
+                # comments
                 try:
-                    comments = await page.locator(
+                    recipe_data["comments"] = await page.locator(
                         "article.reaction.reaction--parent div.mt-reset > p"
                     ).all_inner_texts()
+                    logger.info(
+                        f"Comments ({len(recipe_data['comments'])}) for {recipe_url}"
+                    )
                 except Exception:
                     logger.warning(f"Comments missing for {recipe_url}")
 
+                # nutrition
                 try:
                     nut_items = await page.locator(
                         "ul.nutrition-list li"
                     ).all_inner_texts()
-                    nutrition_data = {}
+                    nd: dict[str, float] = {}
                     for line in nut_items:
                         key = line.split()[0].rstrip(":").lower()
                         val = float(re.search(r"\d+(\.\d+)?", line).group())
                         if key in ("kcal", "calories"):
-                            nutrition_data["calories"] = val
+                            nd["calories"] = val
                         elif key == "fat":
-                            nutrition_data["fat"] = val
+                            nd["fat"] = val
                         elif key == "saturates":
-                            nutrition_data["saturates"] = val
+                            nd["saturates"] = val
                         elif key == "carbs":
-                            nutrition_data["carbs"] = val
+                            nd["carbs"] = val
                         elif key in ("sugar", "sugars"):
-                            nutrition_data["sugar"] = val
+                            nd["sugar"] = val
                         elif key == "fibre":
-                            nutrition_data["fibre"] = val
+                            nd["fibre"] = val
                         elif key == "protein":
-                            nutrition_data["protein"] = val
+                            nd["protein"] = val
                         elif key == "salt":
-                            nutrition_data["salt"] = val
-                    nutrition = Nutrition(**nutrition_data)
+                            nd["salt"] = val
+                    if nd:
+                        recipe_data["nutrition"] = Nutrition(**nd)
+                        logger.info(f"Nutrition: {nd} for {recipe_url}")
                 except Exception:
                     logger.warning(f"Nutrition info missing for {recipe_url}")
 
+                # image
                 try:
                     img_url = await page.locator(
                         "section.post-header picture img"
                     ).get_attribute("src")
-                    img_response = await context.request.get(img_url)
-                    image_bytes = await img_response.body()
+                    img_resp = await context.request.get(img_url)
+                    recipe_data["image"] = await img_resp.body()
+                    logger.info(f"Image captured for {recipe_url}")
                 except Exception:
                     logger.warning(f"Image missing for {recipe_url}")
 
-                # write to DB
-                recipe = Recipe(
-                    id=item_id,
-                    name=name,
-                    cuisine_type=None,
-                    serves_no=serves_no,
-                    difficulty=difficulty,
-                    prep_time=prep_time,
-                    cook_time=cook_time,
-                    rating=int(rating) if rating is not None else 0,
-                    description=description,
-                    features=features,
-                    ingredients=ingredients,
-                    method=method,
-                    comments=comments,
-                    nutrition=nutrition,
-                    image=image_bytes,
-                )
-                recipes_table.add([recipe.model_dump()])
+                # make sure required lists are at least empty
+                recipe_data.setdefault("ingredients", [])
+                recipe_data.setdefault("method", [])
+
+                # ─── now create & write your model ─────────────────────────────────
+                recipe = Recipe(**recipe_data)
+                recipes_table.add([recipe.model_dump(exclude_none=True)])
 
             await page.goto(current_url)
             await asyncio.sleep(1)
